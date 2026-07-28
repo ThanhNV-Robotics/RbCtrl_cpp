@@ -1,6 +1,8 @@
 # Prerequisites
 *.d
 
+.vscode/
+
 # Compiled Object files
 *.slo
 *.lo
@@ -17,22 +19,22 @@
 # Debugger Files
 *.pdb
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
+# # Compiled Dynamic libraries
+# *.so
+# *.dylib
+# *.dll
+# *.so.*
 
 
 # Fortran module files
 *.mod
 *.smod
 
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
+# # Compiled Static libraries
+# *.lai
+# *.la
+# *.a
+# *.lib
 
 # Executables
 *.exe
