@@ -6,20 +6,6 @@
 #include "GLFW_callbacks.h"
 
 
-#include "MJ_interface.h"
-
-//pinocchio
-#include <pinocchio/algorithm/joint-configuration.hpp>
-#include <pinocchio/algorithm/kinematics.hpp>
-#include <pinocchio/multibody/data.hpp>
-#include <pinocchio/multibody/model.hpp>
-#include <pinocchio/parsers/urdf.hpp>
-
-#include "data_logger.h"
-
-#include "PVT_ctrl.h" // joint low-level controller
-
-
 const std::string MODEL_DIR = "models/mjcf"; // path to mujoco xml model
 
 int main (int argc, char** argv)
@@ -50,38 +36,14 @@ int main (int argc, char** argv)
     mjData* mj_data = mj_makeData(mj_model); // pointer to mjData struct
 
     //-------------------------------------------------------------------
-    // Compile pinocchio urdf model
+    // Init Joint Controller
     //-------------------------------------------------------------------
-
-    const std::string model_urdf = "models/urdf/right_leg_6dof.urdf";
-    pinocchio::Model pin_model;
-    pinocchio::urdf::buildModel(model_urdf, pin_model);
-    pinocchio::Data pin_data(pin_model);
-
-    std::printf("Compile pinocchio from urdf ok\n");
-
+    
     //-------------------------------------------------------------------
     // Init classes
     //-------------------------------------------------------------------
-    DataBus RobotState(7); // data bus
+
     const std::string joint_ctrl_config_path = "config/right_joint_ctrl_config.json";
-    PVT_Ctr pvtCtr (mj_model->opt.timestep, joint_ctrl_config_path.c_str());
-    pvtCtr.printPVTinfo();
-    DataLogger logger("record/datalog.log"); // data logger
-    // MuJoCo interface
-
-    MJ_Interface mj_interface (mj_model, mj_data, joint_ctrl_config_path.c_str());
-
-    std::printf("Init MuJoCo Interface\n");
-    mj_interface.printInfo();
-
-    // register variable name for data logger
-    logger.addIterm("simTime", 1);
-    logger.addIterm("joint_pos",6);
-    logger.addIterm("joint_vel",6);
-    logger.addIterm("joint_accel",6);
-    logger.addIterm("joint_torque",6);
-    logger.finishItermAdding();
 
 
     // Init mujoco UI from GLFW_callbacks
@@ -106,38 +68,7 @@ int main (int argc, char** argv)
             ui.applyPerturbation();
             mj_step(mj_model, mj_data);
 
-            simTime = mj_data->time;            
-
-            mj_interface.updateSensorValues(); // read robot states from simulator
-            mj_interface.dataBusWrite(RobotState); // write to data bus so other controllers can utilize
-            
-
-            // // joint low-level controller pvt
-            // generate reference joint trajectory
-            pvtCtr.genTestTrajectory(simTime);
-            // read robot state from data bus
-            pvtCtr.dataBusRead(RobotState);
-            // // Compute joint torque
-            pvtCtr.calMotorsPVT();
-            pvtCtr.dataBusWrite(RobotState); // write the joint toque cmd to data bus
-            mj_interface.setMotorsTorque(RobotState.motors_tor_out);
-            
-            count ++;
-            if (count >= 100 )
-            {
-                // mj_interface.printJointPos();
-                pvtCtr.printTorqueOut();
-                count = 0;        
-            }
-
-            // log data
-            logger.startNewLine();
-            logger.recItermData("simTime", simTime);
-            logger.recItermData("joint_pos",mj_interface.getJointPos());
-            logger.recItermData("joint_vel",mj_interface.getJointVel());
-            logger.recItermData("joint_accel", mj_interface.getJointAccel());
-            logger.recItermData("joint_torque", mj_interface.getJointTorque());
-            logger.finishLine();
+            simTime = mj_data->time;
         }
         ui.updateScene(); //
     }
