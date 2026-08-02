@@ -147,6 +147,7 @@ target_link_libraries(mujoco_simulate PUBLIC
 file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS
   algorithm/*.cpp
   common/*.cpp
+  controllers/*.cpp
   math/*.cpp
   sim_interface/*.cpp
 )
@@ -155,6 +156,7 @@ add_library(core STATIC ${CORE_SOURCES})
 target_include_directories(core PUBLIC
   algorithm
   common
+  controllers
   math
   sim_interface
 )
@@ -171,3 +173,6 @@ target_link_libraries(init_mujoco_glfw_ui PRIVATE core dl)
 
 add_executable(init_pinocchio tests/init_pinocchio.cpp)
 target_link_libraries(init_pinocchio PRIVATE pinocchio::pinocchio)
+
+add_executable(joint_pd_control tests/joint_control/joint_pd_control.cpp)
+target_link_libraries(joint_pd_control PRIVATE core dl)

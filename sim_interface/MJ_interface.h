@@ -1,41 +1,61 @@
 #pragma once
 
-#include <mujoco/mujoco.h>
+#include <Eigen/Dense>
 #include <fstream>
+#include <iostream>
+#include <mujoco/mujoco.h>
 #include <string>
 #include <vector>
-#include "json/json.h" // to process json config file
-#include <iostream>
+#include "json/json.h"
+#include "data_bus.h"
 
-// This class use to read robot states (sensors, motor states) or write control force from/to mujoco simulator
+// Struct to hold per-joint position, velocity, acceleration, and torque
+struct JointState
+{
+    Eigen::VectorXd q;   // joint position
+    Eigen::VectorXd dq;  // joint velocity
+    Eigen::VectorXd ddq; // joint acceleration
+    Eigen::VectorXd tau; // joint torque
+};
+
+struct JointInfo
+{
+    int mjJointId;
+    std::string name;
+    int qposAdr;
+    int qvelAdr;
+    int actuatorId;
+};
 
 class MJ_Interface
 {
-
 public:
     int jointNum{0};
-    std::vector<double> joint_pos;
-    std::vector<double> joint_pos_Old;
-    std::vector<double> joint_vel;
-    std::vector<double> joint_accel;
-    std::vector<double> joint_torque;
+    JointState jointState; // joint state feedback container
 
-    std::vector<std::string> JointName = {}; // this will be initialized with constructor by parsing the json config file
+    std::vector<std::string> JointName = {}; // parsed from JSON config file
 
-    MJ_Interface(mjModel *mj_modelIn, mjData *mj_dataIn, const char *jsonPath); // constructor
-    void updateSensorValues(); // get motor joint states 
-    void setMotorsTorque(std::vector<double> &tauIn); // set joint torque
-    void printInfo ();
-    void printJointPos ();
+    MJ_Interface(mjModel *mj_modelIn, mjData *mj_dataIn, const char *jsonPath);
+    
+    void updateJointState(); // read joint states from simulator into jointState (q, dq, ddq, tau)
+    void writeDataBus (DataBus& dataIn);
+    void updateDataBus (DataBus& dataIn);
+    // Torque command setters
+    void setMotorsTorque(const Eigen::VectorXd &tauIn);
 
-    std::vector<double> getJointPos ();
-    std::vector<double> getJointVel ();
-    std::vector<double> getJointAccel ();
-    std::vector<double> getJointTorque ();
 
+    // Getters returning Eigen::VectorXd references
+    const Eigen::VectorXd &getJointPos() const { return jointState.q; }
+    const Eigen::VectorXd &getJointVel() const { return jointState.dq; }
+    const Eigen::VectorXd &getJointAccel() const { return jointState.ddq; }
+    const Eigen::VectorXd &getJointTorque() const { return jointState.tau; }
+
+    void printInfo();
+    void printJointPos();
+    void printJointInfo (const JointInfo& jointInfoIn);
 
 private:
-    mjModel *mj_model; // pointer to mjModel struct to read/write the data
-    mjData *mj_data;   // pointer to mjData struct to read/write the data
-    std::vector<int> jntId_qpos, jntId_qvel, jntId_dctl; // joint id to read position, vel, acceleration, torque
+    mjModel *mj_model; // pointer to mjModel
+    mjData *mj_data;   // pointer to mjData
+    std::vector<JointInfo> jointInfo_;
 };

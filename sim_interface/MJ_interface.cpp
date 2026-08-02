@@ -1,4 +1,8 @@
 #include "MJ_interface.h"
+#include <cstdio>
+#include <mujoco/mjmodel.h>
+#include <mujoco/mujoco.h>
+#include "data_bus.h"
 
 // constructor
 MJ_Interface::MJ_Interface(mjModel *mj_modelIn, mjData *mj_dataIn, const char* jsonPath)
@@ -9,96 +13,98 @@ MJ_Interface::MJ_Interface(mjModel *mj_modelIn, mjData *mj_dataIn, const char* j
     // Read json file
     Json::Reader reader;
     Json::Value root_read;
-    std::ifstream in(jsonPath,std::ios::binary);
+    std::ifstream in(jsonPath, std::ios::binary);
 
-    reader.parse(in,root_read);
+    reader.parse(in, root_read);
 
     JointName = root_read.getMemberNames(); // joint names come from the config file's top-level keys
-    this->jointNum=JointName.size();
-    this->jntId_qpos.assign(this->jointNum,0); //init jntId position, resize the vector to jointNum and set value to 0
-    this->jntId_qvel.assign(this->jointNum,0);
-    this->jntId_dctl.assign(this->jointNum,0);
+    this->jointNum = JointName.size();
 
-    this->joint_pos.assign(this->jointNum,0);
-    this->joint_vel.assign(this->jointNum,0);
-    this->joint_accel.assign(this->jointNum,0);
-    this->joint_torque.assign(this->jointNum,0);
-    this->joint_pos_Old.assign(this->jointNum, 0);
+    // Initialize Eigen vectors in JointState
+    jointState.q = Eigen::VectorXd::Zero(jointNum);
+    jointState.dq = Eigen::VectorXd::Zero(jointNum);
+    jointState.ddq = Eigen::VectorXd::Zero(jointNum);
+    jointState.tau = Eigen::VectorXd::Zero(jointNum);
 
-    // Match joint id with the JointName list order
+    // build jointInfo_, ordered to match JointName (from the JSON config) so
+    // that jointInfo_[i] lines up with jointState.q[i]/dq[i]/etc.
     for (int i = 0; i < this->jointNum; i++)
     {
-        int tmpId = mj_name2id(this->mj_model, mjOBJ_JOINT, this->JointName[i].c_str());
+        JointInfo info;
 
-        if (tmpId == -1) // No jointName[i] found
-        {
-            std::cout<<this->JointName[i].c_str() << " not found in XML \n";
+        int jid = mj_name2id(this->mj_model, mjOBJ_JOINT, JointName[i].c_str());
+        if (jid < 0) {
+            std::printf("MJ_Interface: joint '%s' not found in mujoco model\n", JointName[i].c_str());
+            continue;
         }
 
-        jntId_qpos[i] = this->mj_model->jnt_qposadr[tmpId];
-        jntId_qvel[i] = mj_model->jnt_dofadr[tmpId];
+        info.mjJointId = jid;
+        info.name = JointName[i];
+        info.qposAdr = this->mj_model->jnt_qposadr[jid];
+        info.qvelAdr = this->mj_model->jnt_dofadr[jid];
 
-        // Find the actuator that drives this joint by transmission target,
-        // rather than guessing a name convention (e.g. "M" + jointName) --
-        // the XML's actuator names don't follow any fixed pattern relative
-        // to their joint names (e.g. "right_hip_pitch_joint" is driven by
-        // actuator "Right_Hip_Pitch_m").
-        int actuatorId = -1;
-        for (int a = 0; a < mj_model->nu; a++)
+        // find the actuator that drives this joint
+        info.actuatorId = -1;
+        for (int a = 0; a < this->mj_model->nu; a++)
         {
-            if (mj_model->actuator_trntype[a] == mjTRN_JOINT && mj_model->actuator_trnid[2 * a] == tmpId)
+            if (this->mj_model->actuator_trntype[a] == mjTRN_JOINT &&
+                this->mj_model->actuator_trnid[2 * a] == jid)
             {
-                actuatorId = a;
+                info.actuatorId = a;
                 break;
             }
         }
-        if (actuatorId == -1)
-        {
-            std::cerr << JointName[i] << ": no actuator drives this joint in the XML file!" << std::endl;
-            std::terminate();
+        if (info.actuatorId < 0) {
+            std::printf("MJ_Interface: no actuator found for joint '%s'\n", JointName[i].c_str());
         }
-        jntId_dctl[i] = actuatorId;
+
+        this->jointInfo_.push_back(info);
     }
 }
 
-void MJ_Interface::updateSensorValues()
+void MJ_Interface::updateJointState()
 {
-    // update joint position
+    // update joint state
     for (int i = 0; i < this->jointNum; i++)
     {
-        this->joint_pos_Old[i] = this->joint_pos[i];
-        this->joint_pos[i] = this->mj_data->qpos[this->jntId_qpos[i]];
-        this->joint_vel[i] = this->mj_data->qvel[this->jntId_qvel[i]];
-        this->joint_accel[i] = this->mj_data->qacc[this->jntId_qvel[i]];
-        this->joint_torque[i] = this->mj_data->qfrc_actuator[this->jntId_qvel[i]];
+        const auto& joint = this->jointInfo_[i];
+        
+        this->jointState.q[i] = mj_data->qpos[joint.qposAdr];
+        this->jointState.dq[i] = mj_data->qvel[joint.qvelAdr];
+        this->jointState.ddq[i] = mj_data->qacc[joint.qvelAdr];
+        this->jointState.tau[i] = mj_data->qfrc_actuator[joint.qvelAdr];
     }
-    return;
 }
 
-std::vector<double> MJ_Interface::getJointPos()
+
+void MJ_Interface::setMotorsTorque(const Eigen::VectorXd &tauIn)
 {
-    return this->joint_pos;
+    if(tauIn.size() != this->jointNum)
+    {
+        std::printf("MjInterface::setMotorsTorque-> size not match");
+        return;
+    }
+    // matching joint torque using jointMap
+    for (int i = 0; i < this->jointNum; i++)
+    {
+        const auto& joint = this->jointInfo_[i];
+        //send torque cmd to mujoco
+        this->mj_data->ctrl[joint.actuatorId] = tauIn[i];
+    }
 }
 
-std::vector<double> MJ_Interface::getJointVel()
+void MJ_Interface::writeDataBus (DataBus& dataIn)
 {
-    return this->joint_vel;
+    dataIn.q = this->getJointPos();
+    dataIn.dq = this->getJointVel();
+    dataIn.ddq = this->getJointAccel();
+    dataIn.tau = this->getJointTorque();
 }
 
-std::vector<double> MJ_Interface::getJointAccel()
+void MJ_Interface::updateDataBus (DataBus& dataIn)
 {
-    return this->joint_accel;
-}
-
-std::vector<double> MJ_Interface::getJointTorque() {
-    return this->joint_torque;
-}
-
-void MJ_Interface::setMotorsTorque(std::vector<double> &tauIn)
-{
-    for (int i = 0; i < jointNum; i++)
-        mj_data->ctrl[jntId_dctl[i]] = tauIn.at(i);
-    return;
+    this->updateJointState();
+    this->writeDataBus(dataIn);
 }
 
 // Printing out function
@@ -109,31 +115,8 @@ void MJ_Interface::printInfo()
 
     for (int i = 0; i < this->jointNum; i++)
     {
-        std::printf("  [%2d] %-25s \n", i, this->JointName[i].c_str());
-    }
-
-    std::printf("Corresponding joint_pos id: ");
-
-    for (int i = 0; i < this->jointNum; i++)
-    {
-        if (i == this->jointNum - 1) std::printf("  %d \n", this->jntId_qpos[i]);
-        else std::printf("  %d, ", this->jntId_qpos[i]);
-    }
-
-    std::printf("Corresponding joint_velocity id: ");
-
-    for (int i = 0; i < this->jointNum; i++)
-    {
-        if (i == this->jointNum - 1) std::printf("  %d \n", this->jntId_qvel[i]);
-        else std::printf("  %d, ", this->jntId_qvel[i]);
-    }
-
-    std::printf("Corresponding actuator id: ");
-
-    for (int i = 0; i < this->jointNum; i++)
-    {
-        if (i == this->jointNum - 1) std::printf("  %d \n", this->jntId_dctl[i]);
-        else std::printf("  %d, ", this->jntId_dctl[i]);
+        const auto& joint = this->jointInfo_[i];
+        printJointInfo(joint);
     }
 }
 
@@ -141,6 +124,14 @@ void MJ_Interface::printJointPos()
 {
     for (int i = 0; i < this->jointNum; i++)
     {
-        std::printf("Joint %-25s position: %.3f\n", this->JointName[i].c_str(), this->joint_pos[this->jntId_qpos[i]]);
+        std::printf("Joint %-25s position: %.3f\n", this->JointName[i].c_str(), jointState.q(i));
     }
+}
+
+void MJ_Interface::printJointInfo (const JointInfo& jointInfoIn)
+{
+    std::cout<<"Joint ID: "<<jointInfoIn.mjJointId<<"\n";
+    std::cout<<"Joint name: "<<jointInfoIn.name<<"\n";
+    std::cout<<"qpos address: "<<jointInfoIn.qposAdr<<"\n";
+    std::cout<<"qvel address: "<<jointInfoIn.qvelAdr<<"\n";
 }

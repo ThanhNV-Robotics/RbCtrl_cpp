@@ -31,7 +31,10 @@ static void keyboard(GLFWwindow* window, int key, int scancode, int act, int mod
 
 static void window_close_callback(GLFWwindow* window)
 {
-    ((UIctr*)(glfwGetWindowUserPointer(window)))->Close();
+    // GLFW already marks the window should-close on its own; the main loop
+    // (while (!glfwWindowShouldClose(...))) picks that up and calls
+    // ui.Close() once, after the loop -- don't free resources here too,
+    // that would free them mid-loop and then a second time in main().
 }
 
 void UIctr::iniGLFW() {
@@ -328,12 +331,10 @@ void UIctr::applyPerturbation()
 }
 
 void UIctr::Close() {
-    // Free mujoco objects
-    mj_deleteData(mj_data);
-    mj_deleteModel(mj_model);
+    // UIctr doesn't own mj_model/mj_data (the caller created them and is
+    // responsible for freeing them) -- only release UI-owned resources here.
     mjr_freeContext(&con);
     mjv_freeScene(&scn);
-
 
     glfwTerminate();
 }

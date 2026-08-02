@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
   mjData* d = mj_makeData(m);
 
   // MJ_Interface
-  MJ_Interface mj_interface ()
+  MJ_Interface mj_interface ();
 
   UIctr ui(m, d);
   ui.iniGLFW();

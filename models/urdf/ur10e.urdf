@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
 <robot name="ur10e" version="1.0">
   <link name="world"/>
-  <joint name="base_joint" type="floating">
+  <joint name="base_joint" type="fixed">
     <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 3.1415927410125732"/>
     <parent link="world"/>
     <child link="base"/>
